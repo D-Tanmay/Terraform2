@@ -10,6 +10,20 @@ terraform {
   required_version = ">=1.9.0"
 }
 
+variable "environment" {
+    type=string
+    description = "the env type"
+    default = "'staging'"
+  
+}
+
+locals {
+  common_tags={
+    environment="dev"
+    lob = "banking"
+    stage="alpha"
+  }
+}
 provider "azurerm" {
   features {
     
@@ -28,8 +42,15 @@ resource "azurerm_storage_account" "example" {
   account_tier             = "Standard"
   account_replication_type = "LRS"
   
-  tags = {
-    environment = "staging"
+ # tags = {
+ #   environment = var.environment
+ # }
+#}
+
+ tags = {
+    environment = local.common_tags.stage
   }
 }
-
+output "storage_account_name" {
+    value = azurerm_storage_account.example.name
+}
