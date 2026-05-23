@@ -1,18 +1,9 @@
-variable "environment" {
-    type=string
-    description = "the env type"
-    default = "'staging'"
-  
-}    
-
-variable "storage_disk" {
-    type = number
-    description = "the size of the storage disk in GB"
-    default = 80
+variable "resource_group_location" {
+  default     = "eastus"
+  description = "Location of the resource group"
 }
 
-variable "is_delete_os_disk_on_termination" {
-    type = bool
-    description = "whether to delete the OS disk when the VM is deleted"
-    default = true
+variable "prefix" {
+  default     = "myterraform"
+  description = "Prefix for all resource names"
 }

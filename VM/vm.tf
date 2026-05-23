@@ -1,69 +1,151 @@
-resource "azurerm_resource_group" "example" {
-  name     = "${var.environment}-resources"
-  location = "West Europe"
+resource "azurerm_resource_group" "rg" {
+  location = var.resource_group_location
+  name     = "${var.prefix}-rg"
 }
 
-resource "azurerm_virtual_network" "main" {
-  name                = "${var.environment}-network"
+# Create virtual network
+resource "azurerm_virtual_network" "my_terraform_network" {
+  name                = "${var.prefix}-vnet"
   address_space       = ["10.0.0.0/16"]
-  location            = azurerm_resource_group.example.location
-  resource_group_name = azurerm_resource_group.example.name
+  location            = azurerm_resource_group.rg.location
+  resource_group_name = azurerm_resource_group.rg.name
 }
 
-resource "azurerm_subnet" "internal" {
-  name                 = "internal"
-  resource_group_name  = azurerm_resource_group.example.name
-  virtual_network_name = azurerm_virtual_network.main.name
-  address_prefixes     = ["10.0.2.0/24"]
+# Create subnet
+resource "azurerm_subnet" "my_terraform_subnet" {
+  name                 = "${var.prefix}-subnet"
+  resource_group_name  = azurerm_resource_group.rg.name
+  virtual_network_name = azurerm_virtual_network.my_terraform_network.name
+  address_prefixes     = ["10.0.1.0/24"]
 }
 
-resource "azurerm_network_interface" "main" {
-  name                = "${var.environment}-nic"
-  location            = azurerm_resource_group.example.location
-  resource_group_name = azurerm_resource_group.example.name
+# Create public IP - Standard SKU
+resource "azurerm_public_ip" "my_terraform_public_ip" {
+  name                = "${var.prefix}-public-ip"
+  location            = azurerm_resource_group.rg.location
+  resource_group_name = azurerm_resource_group.rg.name
+  allocation_method   = "Static"   # Standard SKU requires Static
+  sku                 = "Standard" # Changed from Basic to Standard
+}
+
+# Create Network Security Group and rules
+resource "azurerm_network_security_group" "my_terraform_nsg" {
+  name                = "${var.prefix}-nsg"
+  location            = azurerm_resource_group.rg.location
+  resource_group_name = azurerm_resource_group.rg.name
+
+  security_rule {
+    name                       = "RDP"
+    priority                   = 1000
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "*"
+    source_port_range          = "*"
+    destination_port_range     = "3389"
+    source_address_prefix      = "*"
+    destination_address_prefix = "*"
+  }
+
+  security_rule {
+    name                       = "web"
+    priority                   = 1001
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "80"
+    source_address_prefix      = "*"
+    destination_address_prefix = "*"
+  }
+}
+
+# Create network interface
+resource "azurerm_network_interface" "my_terraform_nic" {
+  name                = "${var.prefix}-nic"
+  location            = azurerm_resource_group.rg.location
+  resource_group_name = azurerm_resource_group.rg.name
 
   ip_configuration {
-    name                          = "testconfiguration1"
-    subnet_id                     = azurerm_subnet.internal.id
+    name                          = "my_nic_configuration"
+    subnet_id                     = azurerm_subnet.my_terraform_subnet.id
     private_ip_address_allocation = "Dynamic"
+    public_ip_address_id          = azurerm_public_ip.my_terraform_public_ip.id
   }
 }
 
-resource "azurerm_virtual_machine" "main" {
-  name                  = "${var.environment}-vm"
-  location              = azurerm_resource_group.example.location
-  resource_group_name   = azurerm_resource_group.example.name
-  network_interface_ids = [azurerm_network_interface.main.id]
-  vm_size               = "Standard_DS1_v2"
+# Connect the security group to the network interface
+resource "azurerm_network_interface_security_group_association" "example" {
+  network_interface_id      = azurerm_network_interface.my_terraform_nic.id
+  network_security_group_id = azurerm_network_security_group.my_terraform_nsg.id
+}
 
-  # Uncomment this line to delete the OS disk automatically when deleting the VM
-  delete_os_disk_on_termination = var.is_delete_os_disk_on_termination
+# Create storage account for boot diagnostics
+resource "azurerm_storage_account" "my_storage_account" {
+  name                     = "diag${random_id.random_id.hex}"
+  location                 = azurerm_resource_group.rg.location
+  resource_group_name      = azurerm_resource_group.rg.name
+  account_tier             = "Standard"
+  account_replication_type = "LRS"
+}
 
-  # Uncomment this line to delete the data disks automatically when deleting the VM
-  # delete_data_disks_on_termination = true
+# Create virtual machine
+resource "azurerm_windows_virtual_machine" "main" {
+  name                  = "${var.prefix}-vm"
+  admin_username        = "azureuser"
+  admin_password        = random_password.password.result
+  location              = azurerm_resource_group.rg.location
+  resource_group_name   = azurerm_resource_group.rg.name
+  network_interface_ids = [azurerm_network_interface.my_terraform_nic.id]
+  size                  = "Standard_B2s"
 
-  storage_image_reference {
-    publisher = "Canonical"
-    offer     = "0001-com-ubuntu-server-jammy"
-    sku       = "22_04-lts"
+  os_disk {
+    name                 = "myOsDisk"
+    caching              = "ReadWrite"
+    storage_account_type = "Standard_LRS"
+  }
+
+  source_image_reference {
+    publisher = "MicrosoftWindowsServer"
+    offer     = "WindowsServer"
+    sku       = "2022-datacenter-azure-edition"
     version   = "latest"
   }
-  storage_os_disk {
-    name              = "myosdisk1"
-    caching           = "ReadWrite"
-    create_option     = "FromImage"
-    managed_disk_type = "Standard_LRS"
-    disk_size_gb = var.storage_disk
+
+  boot_diagnostics {
+    storage_account_uri = azurerm_storage_account.my_storage_account.primary_blob_endpoint
   }
-  os_profile {
-    computer_name  = "hostname"
-    admin_username = "testadmin"
-    admin_password = "Password1234!"
+}
+
+# Install IIS web server to the virtual machine
+resource "azurerm_virtual_machine_extension" "web_server_install" {
+  name                       = "${var.prefix}-wsi"
+  virtual_machine_id         = azurerm_windows_virtual_machine.main.id
+  publisher                  = "Microsoft.Compute"
+  type                       = "CustomScriptExtension"
+  type_handler_version       = "1.8"
+  auto_upgrade_minor_version = true
+
+  settings = <<SETTINGS
+    {
+      "commandToExecute": "powershell -ExecutionPolicy Unrestricted Install-WindowsFeature -Name Web-Server -IncludeAllSubFeature -IncludeManagementTools"
+    }
+  SETTINGS
+}
+
+# Generate random ID for unique storage account name
+resource "random_id" "random_id" {
+  keepers = {
+    resource_group = azurerm_resource_group.rg.name
   }
-  os_profile_linux_config {
-    disable_password_authentication = false
-  }
-  tags = {
-    environment = var.environment
-  }
+  byte_length = 8
+}
+
+# Generate random password for VM
+resource "random_password" "password" {
+  length      = 20
+  min_lower   = 1
+  min_upper   = 1
+  min_numeric = 1
+  min_special = 1
+  special     = true
 }
